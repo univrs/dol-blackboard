@@ -1,0 +1,20 @@
+[package]
+name = "dol-blackboard"
+version = "0.1.0"
+edition = "2021"
+description = "DOL Blackboard — typed, persistent, credit-weighted claims over mesh-llm gossip"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/univrs/dol-blackboard"
+
+[dependencies]
+rand = "0.8"
+anyhow = "1"
+hex = "0.4"
+ed25519-dalek = { version = "2", features = ["serde"] }
+redb = "2"
+schemars = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
