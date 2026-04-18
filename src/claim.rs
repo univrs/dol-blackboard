@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 /// A single DOL claim. The `kind` discriminator serialises as one of the three
 /// DOL v0.8.0 keywords: `gen`, `evo`, `docs`.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "mesh-llm", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum DolClaim {
     Gen {

@@ -7,22 +7,21 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/univrs/dol-blackboard"
 
 [features]
-default = []
-mesh-llm = []
+default = ["mesh-llm"]
+mesh-llm = ["dep:mesh-llm-plugin", "dep:schemars"]
 
 [dependencies]
 blake3 = "1"
 ed25519-dalek = { version = "2", features = ["serde", "rand_core"] }
+mesh-llm-plugin = { path = "../mesh-llm/mesh-llm/plugin", optional = true }
 rand = "0.8"
 redb = "2"
+schemars = { version = "1", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["rt", "sync", "macros"] }
 tracing = "0.1"
-
-# TODO(upstream): Uncomment when mesh_llm_plugin is published.
-# mesh_llm_plugin = { git = "https://github.com/Mesh-LLM/mesh-llm", tag = "v0.59.0" }
 
 [dev-dependencies]
 tempfile = "3"

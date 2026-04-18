@@ -7,6 +7,8 @@
 
 pub mod claim;
 pub mod credit;
+#[cfg(feature = "mesh-llm")]
+pub mod plugin;
 pub mod ring;
 pub mod store;
 
@@ -49,53 +51,8 @@ pub async fn handle_claim_feed(
     Ok(json)
 }
 
-// ---------------------------------------------------------------------------
-// mesh-llm plugin registration (feature-gated)
-// ---------------------------------------------------------------------------
-
-// TODO(upstream): The mesh-llm `plugin!` macro invocation below is
-// pseudo-code. Enable once `mesh_llm_plugin` is published.
-//
-// ```ignore
-// use mesh_llm_plugin::plugin;
-//
-// plugin! {
-//     metadata {
-//         name: "dol-blackboard",
-//         version: "0.2.0",
-//     }
-//     mesh { channels: ["dol.v1"] }
-//     events { subscribe: ["peer_up"] }
-//     mcp {
-//         tool dol_claim_post { input: DolClaim, handler: handle_claim_post }
-//         tool dol_claim_feed { handler: handle_claim_feed }
-//     }
-//     on_initialized {
-//         tracing::info!("dol-blackboard v{} on channel {}", VERSION, DOL_CHANNEL);
-//     }
-//     on_channel_message(channel, payload) {
-//         if channel == DOL_CHANNEL {
-//             match serde_json::from_slice::<DolClaim>(&payload) {
-//                 Ok(claim) => {
-//                     tracing::info!("received claim {} on {}", claim_hash(&claim), DOL_CHANNEL);
-//                     RING.push(claim).await;
-//                 }
-//                 Err(e) => tracing::warn!("malformed claim on {}: {}", DOL_CHANNEL, e),
-//             }
-//         }
-//     }
-//     on_mesh_event(event) {
-//         if event.kind == "peer_up" {
-//             let announce = DolClaim::Gen {
-//                 author: format!("dol-blackboard@{}", event.peer_id),
-//                 ttl_secs: 300,
-//                 body: serde_json::json!({"type": "presence", "version": VERSION}),
-//             };
-//             ctx.send_channel(DOL_CHANNEL, serde_json::to_vec(&announce).unwrap()).await;
-//         }
-//     }
-// }
-// ```
+// Real plugin registration lives in `src/plugin.rs` behind the `mesh-llm` feature.
+// Build with `cargo build --features mesh-llm` to compile the plugin module.
 
 #[cfg(test)]
 mod tests {
