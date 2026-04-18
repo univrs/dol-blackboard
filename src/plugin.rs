@@ -399,7 +399,7 @@ pub fn build_plugin(
             })
         },
 
-        on_channel_message: move |message: mesh_llm_plugin::proto::ChannelMessage, _ctx: &mut PluginContext<'_>| {
+        on_channel_message: move |message: mesh_llm_plugin::proto::ChannelMessage, ctx: &mut PluginContext<'_>| {
             let ring = ring_channel.clone();
             let consensus = consensus_channel.clone();
             Box::pin(async move {
@@ -442,16 +442,40 @@ pub fn build_plugin(
                         }
                     }
                     Ok(DolMessage::SyncRequest) => {
-                        tracing::debug!("sync request received (not yet implemented)");
+                        tracing::debug!("sync request received, sending digest");
+                        let reply = crate::handle_sync_request(&ring).await;
+                        ctx.send_json_channel(DOL_CHANNEL, "", "dol.sync", &reply).await?;
                     }
-                    Ok(DolMessage::SyncDigest { .. }) => {
-                        tracing::debug!("sync digest received (not yet implemented)");
+                    Ok(DolMessage::SyncDigest { hashes }) => {
+                        tracing::debug!("sync digest received ({} hashes), computing missing", hashes.len());
+                        let reply = crate::handle_sync_digest(&ring, hashes).await;
+                        if let DolMessage::FetchRequest { ref hashes } = reply {
+                            if !hashes.is_empty() {
+                                tracing::debug!("requesting {} missing claims", hashes.len());
+                                ctx.send_json_channel(DOL_CHANNEL, "", "dol.sync", &reply).await?;
+                            }
+                        }
                     }
-                    Ok(DolMessage::FetchRequest { .. }) => {
-                        tracing::debug!("fetch request received (not yet implemented)");
+                    Ok(DolMessage::FetchRequest { hashes }) => {
+                        tracing::debug!("fetch request for {} claims", hashes.len());
+                        let reply = crate::handle_fetch_request(&ring, hashes).await;
+                        ctx.send_json_channel(DOL_CHANNEL, "", "dol.sync", &reply).await?;
                     }
-                    Ok(DolMessage::FetchResponse { .. }) => {
-                        tracing::debug!("fetch response received (not yet implemented)");
+                    Ok(DolMessage::FetchResponse { claims }) => {
+                        let count = claims.len();
+                        let mut ingested = 0usize;
+                        for claim in claims {
+                            let hash = claim_hash(&claim);
+                            if !ring.contains_hash(&hash).await {
+                                if let Some(parent) = claim.parent_hash() {
+                                    let mut eng = consensus.lock().await;
+                                    eng.register_evo_claim(&hash, parent, now_secs());
+                                }
+                                ring.push(claim).await;
+                                ingested += 1;
+                            }
+                        }
+                        tracing::info!("fetch response: {count} received, {ingested} new");
                     }
                     Err(_) => {
                         // Fall back to raw DolClaim for backwards compatibility

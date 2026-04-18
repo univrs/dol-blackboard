@@ -129,4 +129,33 @@ mod tests {
         let w = CreditEngine::decay(2.0, now, week_later);
         assert!((w - 1.0).abs() < 0.01);
     }
+
+    #[test]
+    fn apply_consensus_accepted() {
+        let mut engine = CreditEngine::new();
+        engine.apply_consensus_result("alice", true, 1000);
+        let w = engine.get("alice");
+        assert_eq!(w.verified_claims, 1);
+        assert!(w.raw_score > BASE_CREDIT);
+    }
+
+    #[test]
+    fn apply_consensus_rejected() {
+        let mut engine = CreditEngine::new();
+        engine.apply_consensus_result("bob", false, 1000);
+        let w = engine.get("bob");
+        assert_eq!(w.refuted_claims, 1);
+        assert!(w.raw_score < BASE_CREDIT);
+    }
+
+    #[test]
+    fn ledger_accessor() {
+        let mut engine = CreditEngine::new();
+        engine.record_verification("alice", 1000);
+        engine.record_verification("bob", 1001);
+        let ledger = engine.ledger();
+        assert_eq!(ledger.len(), 2);
+        assert!(ledger.contains_key("alice"));
+        assert!(ledger.contains_key("bob"));
+    }
 }

@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 
 use tokio::sync::{broadcast, Mutex};
 
-use crate::claim::DolClaim;
+use crate::claim::{claim_hash, DolClaim};
 
 pub const RING_CAPACITY: usize = 256;
 
@@ -47,6 +47,24 @@ impl ClaimRing {
 
     pub async fn is_empty(&self) -> bool {
         self.inner.lock().await.is_empty()
+    }
+
+    pub async fn hashes(&self) -> Vec<String> {
+        let buf = self.inner.lock().await;
+        buf.iter().map(|c| claim_hash(c)).collect()
+    }
+
+    pub async fn get_by_hashes(&self, wanted: &[String]) -> Vec<DolClaim> {
+        let buf = self.inner.lock().await;
+        buf.iter()
+            .filter(|c| wanted.contains(&claim_hash(c)))
+            .cloned()
+            .collect()
+    }
+
+    pub async fn contains_hash(&self, hash: &str) -> bool {
+        let buf = self.inner.lock().await;
+        buf.iter().any(|c| claim_hash(c) == hash)
     }
 }
 

@@ -90,6 +90,50 @@ pub fn handle_credit_query(
     engine.credit_engine().get(author)
 }
 
+// ---------------------------------------------------------------------------
+// Sync protocol handlers
+// ---------------------------------------------------------------------------
+
+pub async fn handle_sync_request(ring: &ClaimRing) -> DolMessage {
+    let hashes = ring.hashes().await;
+    DolMessage::SyncDigest { hashes }
+}
+
+pub async fn handle_sync_digest(
+    ring: &ClaimRing,
+    remote_hashes: Vec<String>,
+) -> DolMessage {
+    let local_hashes = ring.hashes().await;
+    let missing: Vec<String> = remote_hashes
+        .into_iter()
+        .filter(|h| !local_hashes.contains(h))
+        .collect();
+    DolMessage::FetchRequest { hashes: missing }
+}
+
+pub async fn handle_fetch_request(
+    ring: &ClaimRing,
+    requested: Vec<String>,
+) -> DolMessage {
+    let claims = ring.get_by_hashes(&requested).await;
+    DolMessage::FetchResponse { claims }
+}
+
+pub async fn handle_fetch_response(
+    ring: &ClaimRing,
+    claims: Vec<DolClaim>,
+) -> Vec<String> {
+    let mut ingested = Vec::new();
+    for claim in claims {
+        let hash = claim_hash(&claim);
+        if !ring.contains_hash(&hash).await {
+            ring.push(claim).await;
+            ingested.push(hash);
+        }
+    }
+    ingested
+}
+
 // Real plugin registration lives in `src/plugin.rs` behind the `mesh-llm` feature.
 // Build with `cargo build --features mesh-llm` to compile the plugin module.
 
@@ -153,5 +197,92 @@ mod tests {
         assert_eq!(ring_b.len().await, 1);
         let feed = ring_b.last_n(1).await;
         assert_eq!(claim_hash(&feed[0]), hash);
+    }
+
+    #[tokio::test]
+    async fn sync_request_returns_digest() {
+        let ring = ClaimRing::new();
+        for i in 0..3 {
+            ring.push(DolClaim::Gen {
+                author: format!("a-{i}"),
+                ttl_secs: 60,
+                body: json!({"i": i}),
+            })
+            .await;
+        }
+        let reply = handle_sync_request(&ring).await;
+        match reply {
+            DolMessage::SyncDigest { hashes } => assert_eq!(hashes.len(), 3),
+            _ => panic!("expected SyncDigest"),
+        }
+    }
+
+    #[tokio::test]
+    async fn sync_digest_computes_missing() {
+        let ring = ClaimRing::new();
+        let claim = DolClaim::Gen {
+            author: "local".into(),
+            ttl_secs: 60,
+            body: json!({"local": true}),
+        };
+        let local_hash = claim_hash(&claim);
+        ring.push(claim).await;
+
+        let remote_hashes = vec![local_hash.clone(), "unknown-hash".to_string()];
+        let reply = handle_sync_digest(&ring, remote_hashes).await;
+        match reply {
+            DolMessage::FetchRequest { hashes } => {
+                assert_eq!(hashes.len(), 1);
+                assert_eq!(hashes[0], "unknown-hash");
+            }
+            _ => panic!("expected FetchRequest"),
+        }
+    }
+
+    #[tokio::test]
+    async fn fetch_request_returns_matching_claims() {
+        let ring = ClaimRing::new();
+        let claim = DolClaim::Gen {
+            author: "alice".into(),
+            ttl_secs: 60,
+            body: json!({"x": 1}),
+        };
+        let hash = claim_hash(&claim);
+        ring.push(claim).await;
+
+        let reply = handle_fetch_request(&ring, vec![hash.clone(), "bogus".into()]).await;
+        match reply {
+            DolMessage::FetchResponse { claims } => {
+                assert_eq!(claims.len(), 1);
+                assert_eq!(claim_hash(&claims[0]), hash);
+            }
+            _ => panic!("expected FetchResponse"),
+        }
+    }
+
+    #[tokio::test]
+    async fn fetch_response_ingests_new_claims() {
+        let ring = ClaimRing::new();
+        let existing = DolClaim::Gen {
+            author: "existing".into(),
+            ttl_secs: 60,
+            body: json!({"old": true}),
+        };
+        ring.push(existing.clone()).await;
+
+        let new_claim = DolClaim::Gen {
+            author: "new".into(),
+            ttl_secs: 60,
+            body: json!({"fresh": true}),
+        };
+
+        let ingested = handle_fetch_response(
+            &ring,
+            vec![existing, new_claim],
+        )
+        .await;
+
+        assert_eq!(ingested.len(), 1, "should only ingest the new claim");
+        assert_eq!(ring.len().await, 2);
     }
 }
