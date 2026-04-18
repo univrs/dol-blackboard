@@ -54,6 +54,13 @@ impl DolClaim {
             DolClaim::Docs { .. } => "docs",
         }
     }
+
+    pub fn parent_hash(&self) -> Option<&str> {
+        match self {
+            DolClaim::Evo { parent, .. } => Some(parent),
+            _ => None,
+        }
+    }
 }
 
 /// Compute a deterministic BLAKE3 content hash for a [`DolClaim`].

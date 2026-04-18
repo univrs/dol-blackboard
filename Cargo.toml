@@ -1,6 +1,6 @@
 [package]
 name = "dol-blackboard"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "DOL Blackboard — typed claims (gen/evo/docs) over mesh-llm gossip with persistence, signing, and credit weighting"
 license = "MIT OR Apache-2.0"
@@ -11,6 +11,7 @@ default = ["mesh-llm"]
 mesh-llm = ["dep:mesh-llm-plugin", "dep:schemars"]
 
 [dependencies]
+anyhow = "1"
 blake3 = "1"
 ed25519-dalek = { version = "2", features = ["serde", "rand_core"] }
 mesh-llm-plugin = { path = "../mesh-llm/mesh-llm/plugin", optional = true }

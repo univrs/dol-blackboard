@@ -6,14 +6,18 @@
 //! for fast feed access.
 
 pub mod claim;
+pub mod consensus;
 pub mod credit;
 #[cfg(feature = "mesh-llm")]
 pub mod plugin;
+pub mod protocol;
 pub mod ring;
 pub mod store;
 
 pub use claim::{claim_hash, DolClaim, SignedClaim};
+pub use consensus::{ConsensusEngine, ConsensusState, ConsensusStatus, EvoVote, Verdict};
 pub use credit::{CreditEngine, CreditWeight};
+pub use protocol::DolMessage;
 pub use ring::{ClaimRing, RING_CAPACITY};
 pub use store::ClaimStore;
 
@@ -30,6 +34,8 @@ pub enum BlackboardError {
     Serde(#[from] serde_json::Error),
     #[error("store error: {0}")]
     Store(#[from] store::StoreError),
+    #[error("consensus error: {0}")]
+    Consensus(#[from] consensus::ConsensusError),
 }
 
 pub async fn handle_claim_post(
@@ -49,6 +55,39 @@ pub async fn handle_claim_feed(
     let claims = ring.last_n(limit).await;
     let json = serde_json::to_string_pretty(&claims)?;
     Ok(json)
+}
+
+pub async fn handle_vote_cast(
+    engine: &tokio::sync::Mutex<ConsensusEngine>,
+    vote: EvoVote,
+    now: u64,
+) -> Result<ConsensusStatus, BlackboardError> {
+    let mut eng = engine.lock().await;
+    eng.cast_vote(vote.clone())?;
+    let status = eng.evaluate(&vote.claim_hash, now)?;
+    if status.state != ConsensusState::Pending {
+        let accepted = status.state == ConsensusState::Accepted;
+        eng.credit_engine_mut()
+            .apply_consensus_result(&vote.voter, accepted, now);
+    }
+    Ok(status)
+}
+
+pub async fn handle_consensus_status(
+    engine: &tokio::sync::Mutex<ConsensusEngine>,
+    claim_hash: &str,
+    now: u64,
+) -> Result<ConsensusStatus, BlackboardError> {
+    let mut eng = engine.lock().await;
+    let status = eng.evaluate(claim_hash, now)?;
+    Ok(status)
+}
+
+pub fn handle_credit_query(
+    engine: &ConsensusEngine,
+    author: &str,
+) -> CreditWeight {
+    engine.credit_engine().get(author)
 }
 
 // Real plugin registration lives in `src/plugin.rs` behind the `mesh-llm` feature.

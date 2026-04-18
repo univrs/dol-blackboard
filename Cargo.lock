@@ -269,6 +269,7 @@ dependencies = [
 name = "dol-blackboard"
 version = "0.2.0"
 dependencies = [
+ "anyhow",
  "blake3",
  "ed25519-dalek",
  "mesh-llm-plugin",

@@ -7,6 +7,7 @@ const BASE_CREDIT: f64 = 1.0;
 const CREDIT_HALF_LIFE: f64 = 7.0 * 24.0 * 3600.0;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "mesh-llm", derive(schemars::JsonSchema))]
 pub struct CreditWeight {
     pub author: String,
     pub raw_score: f64,
@@ -65,6 +66,18 @@ impl CreditEngine {
         entry.raw_score = (entry.raw_score - 0.3).max(0.1);
         entry.last_active = now;
         entry.effective_score = Self::decay(entry.raw_score, entry.last_active, now);
+    }
+
+    pub fn ledger(&self) -> &HashMap<String, CreditWeight> {
+        &self.ledger
+    }
+
+    pub fn apply_consensus_result(&mut self, author: &str, accepted: bool, now: u64) {
+        if accepted {
+            self.record_verification(author, now);
+        } else {
+            self.record_refutation(author, now);
+        }
     }
 
     pub fn weight_claim(&self, author: &str, now: u64) -> f64 {
