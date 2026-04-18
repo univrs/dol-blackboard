@@ -1,20 +1,29 @@
 [package]
 name = "dol-blackboard"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "DOL Blackboard — typed, persistent, credit-weighted claims over mesh-llm gossip"
+description = "DOL Blackboard — typed claims (gen/evo/docs) over mesh-llm gossip with persistence, signing, and credit weighting"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/univrs/dol-blackboard"
 
+[features]
+default = []
+mesh-llm = []
+
 [dependencies]
+blake3 = "1"
+ed25519-dalek = { version = "2", features = ["serde", "rand_core"] }
 rand = "0.8"
-anyhow = "1"
-hex = "0.4"
-ed25519-dalek = { version = "2", features = ["serde"] }
 redb = "2"
-schemars = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.10"
-tokio = { version = "1", features = ["full"] }
+thiserror = "2"
+tokio = { version = "1", features = ["rt", "sync", "macros"] }
 tracing = "0.1"
+
+# TODO(upstream): Uncomment when mesh_llm_plugin is published.
+# mesh_llm_plugin = { git = "https://github.com/Mesh-LLM/mesh-llm", tag = "v0.59.0" }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

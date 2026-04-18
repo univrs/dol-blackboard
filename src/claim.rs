@@ -1,125 +1,81 @@
-//! Core claim types — structured DOL claims that extend mesh-llm's BlackboardItem.
+//! Core claim types — DOL v0.8.0 keywords: gen, evo, docs.
 
-use ed25519_dalek::{Signature, SigningKey, VerifyingKey, Signer, Verifier};
-use schemars::JsonSchema;
+use std::collections::BTreeMap;
+
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
-/// The six fundamental claim types in DOL ontology.
-///
-/// These extend mesh-llm's free-text BlackboardItem with structured semantics.
-/// Each maps to a DOL ontological primitive that can be validated, weighted,
-/// and evolved by the DOL-EVO consensus layer.
-#[derive(Clone, Debug, PartialEq, Eq, JsonSchema, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ClaimType {
-    /// A factual claim with optional evidence links.
-    Assertion,
-    /// A sensor/runtime observation — raw data, not interpretation.
-    Observation,
-    /// A testable prediction — must include falsification criteria.
-    Hypothesis,
-    /// Counter-evidence to an existing claim, referenced by ID.
-    Refutation,
-    /// A promise to perform an action by a deadline.
-    Commitment,
-    /// Proof of a completed action — references the original Commitment.
-    Receipt,
-}
-
-impl ClaimType {
-    /// Parse from mesh-llm blackboard text prefix convention.
-    ///
-    /// Maps: `ASSERT:`, `OBS:`, `HYP:`, `REFUTE:`, `COMMIT:`, `RECEIPT:`
-    pub fn from_prefix(text: &str) -> Option<(Self, &str)> {
-        let text = text.trim();
-        let prefixes: &[(&str, ClaimType)] = &[
-            ("ASSERT:", ClaimType::Assertion),
-            ("OBS:", ClaimType::Observation),
-            ("HYP:", ClaimType::Hypothesis),
-            ("REFUTE:", ClaimType::Refutation),
-            ("COMMIT:", ClaimType::Commitment),
-            ("RECEIPT:", ClaimType::Receipt),
-        ];
-        for (prefix, claim_type) in prefixes {
-            if text.starts_with(prefix) {
-                return Some((claim_type.clone(), text[prefix.len()..].trim()));
-            }
-        }
-        None
-    }
-}
-
-/// A structured DOL claim — the unit of knowledge on the blackboard.
-#[derive(Clone, Debug, JsonSchema, Serialize, Deserialize)]
-pub struct DolClaim {
-    /// Unique claim ID (SHA-256 of content + author + timestamp).
-    pub id: String,
-    /// The claim type.
-    pub claim_type: ClaimType,
-    /// Author's Ed25519 public key (hex-encoded).
-    pub author: String,
-    /// The claim body text.
-    pub body: String,
-    /// Unix timestamp (seconds).
-    pub timestamp: u64,
-    /// Optional: ID of the claim this references (for Refutation, Receipt).
-    pub references: Option<String>,
-    /// Optional: evidence URLs supporting this claim.
-    pub evidence: Vec<String>,
-    /// Optional: mesh-llm BlackboardItem ID this was parsed from.
-    pub gossip_id: Option<u64>,
-    /// Credit weight assigned by the credit engine.
-    pub weight: f64,
+/// A single DOL claim. The `kind` discriminator serialises as one of the three
+/// DOL v0.8.0 keywords: `gen`, `evo`, `docs`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum DolClaim {
+    Gen {
+        author: String,
+        ttl_secs: u64,
+        body: serde_json::Value,
+    },
+    Evo {
+        author: String,
+        ttl_secs: u64,
+        parent: String,
+        body: serde_json::Value,
+    },
+    Docs {
+        author: String,
+        ttl_secs: u64,
+        target: String,
+        body: String,
+    },
 }
 
 impl DolClaim {
-    /// Create a new claim, computing its content-addressed ID.
-    pub fn new(
-        claim_type: ClaimType,
-        author: String,
-        body: String,
-        timestamp: u64,
-    ) -> Self {
-        let id = Self::compute_id(&author, &body, timestamp);
-        Self {
-            id,
-            claim_type,
-            author,
-            body,
-            timestamp,
-            references: None,
-            evidence: Vec::new(),
-            gossip_id: None,
-            weight: 1.0,
+    pub fn author(&self) -> &str {
+        match self {
+            DolClaim::Gen { author, .. }
+            | DolClaim::Evo { author, .. }
+            | DolClaim::Docs { author, .. } => author,
         }
     }
 
-    /// Content-addressed ID: SHA-256(author || body || timestamp).
-    fn compute_id(author: &str, body: &str, timestamp: u64) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(author.as_bytes());
-        hasher.update(body.as_bytes());
-        hasher.update(timestamp.to_le_bytes());
-        hex::encode(hasher.finalize())
+    pub fn ttl_secs(&self) -> u64 {
+        match self {
+            DolClaim::Gen { ttl_secs, .. }
+            | DolClaim::Evo { ttl_secs, .. }
+            | DolClaim::Docs { ttl_secs, .. } => *ttl_secs,
+        }
     }
 
-    /// Add a reference to another claim (for Refutation/Receipt).
-    pub fn with_reference(mut self, ref_id: String) -> Self {
-        self.references = Some(ref_id);
-        self
+    pub fn kind_str(&self) -> &'static str {
+        match self {
+            DolClaim::Gen { .. } => "gen",
+            DolClaim::Evo { .. } => "evo",
+            DolClaim::Docs { .. } => "docs",
+        }
     }
+}
 
-    /// Add evidence URLs.
-    pub fn with_evidence(mut self, evidence: Vec<String>) -> Self {
-        self.evidence = evidence;
-        self
-    }
+/// Compute a deterministic BLAKE3 content hash for a [`DolClaim`].
+///
+/// Round-trips through BTreeMap-backed structure for stable key order.
+pub fn claim_hash(claim: &DolClaim) -> String {
+    let value = serde_json::to_value(claim).expect("DolClaim always serialises");
+    let canonical = canonicalise(&value);
+    let bytes = serde_json::to_vec(&canonical).expect("canonical Value always serialises");
+    blake3::hash(&bytes).to_hex().to_string()
+}
 
-    /// Link to the original mesh-llm gossip item.
-    pub fn from_gossip(mut self, gossip_id: u64) -> Self {
-        self.gossip_id = Some(gossip_id);
-        self
+fn canonicalise(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => {
+            let sorted: BTreeMap<String, serde_json::Value> =
+                map.iter().map(|(k, v)| (k.clone(), canonicalise(v))).collect();
+            serde_json::to_value(sorted).expect("BTreeMap always serialises")
+        }
+        serde_json::Value::Array(arr) => {
+            serde_json::Value::Array(arr.iter().map(canonicalise).collect())
+        }
+        other => other.clone(),
     }
 }
 
@@ -127,75 +83,135 @@ impl DolClaim {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SignedClaim {
     pub claim: DolClaim,
-    /// Ed25519 signature over the canonical JSON of the claim.
+    pub hash: String,
     pub signature: Vec<u8>,
 }
 
 impl SignedClaim {
-    /// Sign a claim with the author's private key.
-    pub fn sign(claim: DolClaim, signing_key: &SigningKey) -> anyhow::Result<Self> {
+    pub fn sign(claim: DolClaim, signing_key: &SigningKey) -> Result<Self, serde_json::Error> {
+        let hash = claim_hash(&claim);
         let canonical = serde_json::to_vec(&claim)?;
         let signature = signing_key.sign(&canonical);
         Ok(Self {
             claim,
+            hash,
             signature: signature.to_bytes().to_vec(),
         })
     }
 
-    /// Verify the signature against the author's public key.
-    pub fn verify(&self, verifying_key: &VerifyingKey) -> anyhow::Result<bool> {
+    pub fn verify(&self, verifying_key: &VerifyingKey) -> Result<bool, SignVerifyError> {
         let canonical = serde_json::to_vec(&self.claim)?;
         let sig = Signature::from_bytes(
-            self.signature.as_slice().try_into()
-                .map_err(|_| anyhow::anyhow!("invalid signature length"))?
+            self.signature
+                .as_slice()
+                .try_into()
+                .map_err(|_| SignVerifyError::InvalidSignatureLength)?,
         );
         Ok(verifying_key.verify(&canonical, &sig).is_ok())
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum SignVerifyError {
+    #[error("JSON serialisation error: {0}")]
+    Serde(#[from] serde_json::Error),
+    #[error("invalid signature length")]
+    InvalidSignatureLength,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::SigningKey;
+    use rand::rngs::OsRng;
+    use serde_json::json;
 
     #[test]
-    fn test_claim_type_from_prefix() {
-        let (ct, body) = ClaimType::from_prefix("ASSERT: the sky is blue").unwrap();
-        assert_eq!(ct, ClaimType::Assertion);
-        assert_eq!(body, "the sky is blue");
+    fn claim_roundtrip() {
+        let claim = DolClaim::Gen {
+            author: "alice".into(),
+            ttl_secs: 3600,
+            body: json!({"module": "container.exists", "note": "test"}),
+        };
+        let serialised = serde_json::to_string(&claim).unwrap();
+        assert!(serialised.contains(r#""kind":"gen""#));
+        let deserialized: DolClaim = serde_json::from_str(&serialised).unwrap();
+        assert_eq!(claim, deserialized);
 
-        let (ct, body) = ClaimType::from_prefix("OBS: temperature is 22C").unwrap();
-        assert_eq!(ct, ClaimType::Observation);
-        assert_eq!(body, "temperature is 22C");
+        let evo = DolClaim::Evo {
+            author: "bob".into(),
+            ttl_secs: 1800,
+            parent: "abc123".into(),
+            body: json!({"delta": true}),
+        };
+        let evo_json = serde_json::to_string(&evo).unwrap();
+        assert!(evo_json.contains(r#""kind":"evo""#));
+        assert_eq!(evo, serde_json::from_str::<DolClaim>(&evo_json).unwrap());
 
-        assert!(ClaimType::from_prefix("STATUS: working on stuff").is_none());
+        let docs = DolClaim::Docs {
+            author: "carol".into(),
+            ttl_secs: 7200,
+            target: "def456".into(),
+            body: "This explains the thing.".into(),
+        };
+        let docs_json = serde_json::to_string(&docs).unwrap();
+        assert!(docs_json.contains(r#""kind":"docs""#));
+        assert_eq!(docs, serde_json::from_str::<DolClaim>(&docs_json).unwrap());
     }
 
     #[test]
-    fn test_claim_id_is_deterministic() {
-        let c1 = DolClaim::new(ClaimType::Assertion, "alice".into(), "hello".into(), 1000);
-        let c2 = DolClaim::new(ClaimType::Assertion, "alice".into(), "hello".into(), 1000);
-        assert_eq!(c1.id, c2.id);
+    fn reject_malformed() {
+        let bad = r#"{"kind":"gen","author":"a"}"#;
+        assert!(serde_json::from_str::<DolClaim>(bad).is_err());
 
-        let c3 = DolClaim::new(ClaimType::Assertion, "bob".into(), "hello".into(), 1000);
-        assert_ne!(c1.id, c3.id);
+        let unknown_kind = r#"{"kind":"mutate","author":"a","ttl_secs":60,"parent":"x","body":{}}"#;
+        assert!(serde_json::from_str::<DolClaim>(unknown_kind).is_err());
     }
 
     #[test]
-    fn test_sign_and_verify() {
-        use ed25519_dalek::SigningKey;
-        use rand::rngs::OsRng;
+    fn content_hash_deterministic() {
+        let claim = DolClaim::Gen {
+            author: "alice".into(),
+            ttl_secs: 3600,
+            body: json!({"b": 2, "a": 1}),
+        };
+        let h1 = claim_hash(&claim);
+        let h2 = claim_hash(&claim);
+        assert_eq!(h1, h2);
+        assert_eq!(h1.len(), 64);
+    }
 
+    #[test]
+    fn content_hash_key_order_independent() {
+        let claim_a = DolClaim::Gen {
+            author: "alice".into(),
+            ttl_secs: 3600,
+            body: json!({"z": 1, "a": 2}),
+        };
+        let mut map = serde_json::Map::new();
+        map.insert("a".into(), json!(2));
+        map.insert("z".into(), json!(1));
+        let claim_b = DolClaim::Gen {
+            author: "alice".into(),
+            ttl_secs: 3600,
+            body: serde_json::Value::Object(map),
+        };
+        assert_eq!(claim_hash(&claim_a), claim_hash(&claim_b));
+    }
+
+    #[test]
+    fn sign_and_verify() {
         let signing_key = SigningKey::generate(&mut OsRng);
         let verifying_key = signing_key.verifying_key();
 
-        let claim = DolClaim::new(
-            ClaimType::Hypothesis,
-            hex::encode(verifying_key.as_bytes()),
-            "entropy increases with complexity".into(),
-            1713400000,
-        );
+        let claim = DolClaim::Gen {
+            author: format!("{:x?}", verifying_key.as_bytes()),
+            ttl_secs: 3600,
+            body: json!({"test": true}),
+        };
 
         let signed = SignedClaim::sign(claim, &signing_key).unwrap();
         assert!(signed.verify(&verifying_key).unwrap());
+        assert!(!signed.hash.is_empty());
     }
 }

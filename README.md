@@ -1,98 +1,82 @@
 # dol-blackboard
 
-**DOL Blackboard — typed, persistent, credit-weighted claims over mesh-llm gossip**
+**DOL Blackboard — typed claims (gen/evo/docs) over mesh-llm gossip**
 
 Layer 3 of the [Univrs Integration Stack](https://metalearn.org/integration/).
 
 ## What This Is
 
-`dol-blackboard` extends [mesh-llm's ephemeral blackboard plugin](https://github.com/Mesh-LLM/mesh-llm/tree/main/mesh-llm/src/plugins/blackboard) with:
+`dol-blackboard` bridges [mesh-llm](https://github.com/Mesh-LLM/mesh-llm) gossip channels with DOL v0.8.0's structured claim system:
 
-1. **Typed claims** — structured DOL ontology types instead of raw text
-2. **Persistence** — claims survive beyond the 48hr gossip TTL
-3. **Credit weighting** — claims carry stake/reputation weight from DOL identity
-4. **Ed25519 signatures** — every claim is cryptographically signed by the author's sovereign identity
+1. **Typed claims** — `gen` (new knowledge), `evo` (evolving existing claims), `docs` (documenting claims)
+2. **BLAKE3 hashing** — deterministic content-addressed claim IDs with canonicalised key order
+3. **Ed25519 signatures** — every claim can be cryptographically signed by the author
+4. **Persistence** — claims survive beyond gossip TTL via redb embedded store
+5. **Credit weighting** — claims carry reputation weight with time-decay
+6. **Ring buffer** — in-memory fast-access feed of recent claims (capacity 256)
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────┐
-│  Layer 6: MetaLearn Loop                │  ← fitness landscapes, ontogenesis
-│  Layer 5: Spirit / Ghost / Loa          │  ← agent runtimes
-│  Layer 4: DOL-EVO Consensus             │  ← stake-weighted evolution
+│  Layer 6: MetaLearn Loop                │
+│  Layer 5: Spirit / Ghost / Loa          │
+│  Layer 4: DOL-EVO Consensus             │
 ├─────────────────────────────────────────┤
-│  Layer 3: DOL Blackboard  ← THIS REPO  │  ← typed claims, persistence, credit
+│  Layer 3: DOL Blackboard  ← THIS REPO  │
 ├─────────────────────────────────────────┤
-│  Layer 2: mesh-llm plugins              │  ← blackboard gossip, MCP tools
-│  Layer 1: mesh-llm substrate            │  ← QUIC/iroh P2P, OpenAI API
+│  Layer 2: mesh-llm plugins              │
+│  Layer 1: mesh-llm substrate            │
 └─────────────────────────────────────────┘
 ```
 
-## Bridge Design
+## Build
 
-dol-blackboard sits between mesh-llm's gossip layer and DOL's ontology system:
+```bash
+cargo build
+```
 
+## Test
+
+```bash
+cargo test
 ```
-mesh-llm blackboard (ephemeral gossip)
-        │
-        ▼
-┌──────────────────────┐
-│   dol-blackboard     │
-│                      │
-│  ┌────────────────┐  │
-│  │ Claim Parser   │  │  ← text → typed DOL claim
-│  │ Signature      │  │  ← Ed25519 sign/verify
-│  │ Persistence    │  │  ← redb local store
-│  │ Credit Engine  │  │  ← weight by identity stake
-│  │ Query API      │  │  ← structured search over claims
-│  └────────────────┘  │
-│                      │
-└──────────────────────┘
-        │
-        ▼
-DOL ontology (univrs-dol types)
+
+## mesh-llm Registration
+
+Add to `~/.mesh-llm/config.toml` once `mesh_llm_plugin` is published:
+
+```toml
+[[plugin]]
+name = "dol-blackboard"
+version = "0.2.0"
+path = "/path/to/dol-blackboard"
+
+[plugin.mesh]
+channels = ["dol.v1"]
+
+[plugin.events]
+subscribe = ["peer_up"]
 ```
+
+## MCP Tools
+
+| Tool | Input | Output |
+|------|-------|--------|
+| `dol_claim_post` | `DolClaim` JSON | BLAKE3 content hash |
+| `dol_claim_feed` | optional `n` (default 50) | last N claims as JSON |
 
 ## Claim Types
 
-DOL claims extend mesh-llm's free-text `BlackboardItem` with structured types:
-
-| Type | Prefix | Description |
-|------|--------|-------------|
-| `Assertion` | `ASSERT:` | A factual claim with optional evidence |
-| `Observation` | `OBS:` | Sensor/runtime observation |
-| `Hypothesis` | `HYP:` | Testable prediction |
-| `Refutation` | `REFUTE:` | Counter-evidence to an existing claim |
-| `Commitment` | `COMMIT:` | Promise to perform an action |
-| `Receipt` | `RECEIPT:` | Proof of completed action |
-
-These map to DOL's ontological primitives and can be validated, weighted, and evolved by Layer 4 (DOL-EVO).
-
-## Dependencies
-
-| Crate | Source | Purpose |
-|-------|--------|---------|
-| `mesh-llm-plugin` | [Mesh-LLM/mesh-llm](https://github.com/Mesh-LLM/mesh-llm) | Plugin trait, gossip transport |
-| `dol-core` | [univrs/dol](https://github.com/univrs/dol) | Ontology types, identity |
-| `ed25519-dalek` | crates.io | Cryptographic signatures |
-| `redb` | crates.io | Embedded persistent store |
-| `serde` / `schemars` | crates.io | Serialization, JSON Schema |
+```json
+{"kind": "gen",  "author": "...", "ttl_secs": 3600, "body": {...}}
+{"kind": "evo",  "author": "...", "ttl_secs": 3600, "parent": "hash", "body": {...}}
+{"kind": "docs", "author": "...", "ttl_secs": 7200, "target": "hash", "body": "..."}
+```
 
 ## Status
 
-🟡 **Scaffolding** — Core types defined, bridge protocol designed. Not yet connected to live mesh-llm gossip.
-
-## Roadmap
-
-- [x] Repo scaffold + architecture doc
-- [x] Core claim types (DolClaim, ClaimType, SignedClaim)
-- [x] Persistence layer (redb)
-- [ ] mesh-llm plugin integration — subscribe to blackboard.v1 channel
-- [ ] Ed25519 signing bridge — DOL identity → mesh-llm peer ID
-- [ ] Credit engine — weight claims by author stake
-- [ ] Query API — structured search over typed claims
-- [ ] MCP tool exposure — dol_blackboard_query, dol_blackboard_assert
-- [ ] DOL-EVO integration — feed claims into evolutionary consensus (Layer 4)
+Scaffolding complete. Pending: mesh-llm plugin wiring (blocked on upstream crate publish).
 
 ## License
 
